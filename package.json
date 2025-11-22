@@ -1,7 +1,8 @@
 {
-  "name": "Kbcrt播放器",
+  "name": "kbcrt-player",      
+  "productName": "Kbcrt播放器",
   "version": "1.0.0",
-  "description": "A local music player with lyrics and visualization",
+  "description": "A local music player with lyrics and visualization by Kbcrt",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
@@ -18,7 +19,7 @@
   },
   "build": {
     "appId": "com.kbcrt.musicplayer",
-    "productName": "AMPlayer",
+    "productName": "Kbcrt播放器",
     "win": {
       "target": "nsis",
       "icon": "icon.ico" 
