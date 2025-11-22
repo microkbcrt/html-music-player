@@ -1,10 +1,11 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
+// 1. 在这里引入 jsmediatags
+const jsmediatags = require('jsmediatags');
 
 let mainWindow;
 
-// 支持的音频格式
 const AUDIO_EXTS = ['.mp3', '.flac', '.wav', '.ogg', '.m4a'];
 
 function createWindow() {
@@ -13,74 +14,64 @@ function createWindow() {
     height: 800,
     minWidth: 800,
     minHeight: 600,
-    frame: true, // 系统原生标题栏，设为 false 可自定义
+    frame: true,
     backgroundColor: '#000000',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      webSecurity: true 
+      webSecurity: true,
+      sandbox: false // 2. 建议显式关闭沙盒，以防某些文件系统操作受限
     }
   });
 
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
   
-  // 窗口加载完毕后，处理启动文件
   mainWindow.webContents.on('did-finish-load', () => {
     handleStartupFile();
   });
 }
 
-// 处理启动参数（核心：双击打开文件）
 function handleStartupFile() {
   let filePath = null;
-
-  // Windows: process.argv[1] 通常是文件路径 (开发模式下可能是 process.argv[2])
   if (process.platform === 'win32' && process.argv.length >= 2) {
     const lastArg = process.argv[process.argv.length - 1];
-    if (fs.existsSync(lastArg) && fs.statSync(lastArg).isFile()) {
+    // 简单的判断，防止开发环境读取到 .exe 自身
+    if (fs.existsSync(lastArg) && fs.statSync(lastArg).isFile() && lastArg !== process.execPath) {
       const ext = path.extname(lastArg).toLowerCase();
       if (AUDIO_EXTS.includes(ext)) {
         filePath = lastArg;
       }
     }
   }
-
   if (filePath) {
     loadDirectoryAndPlay(filePath);
   }
 }
 
-// 扫描目录并发送给前端
 function loadDirectoryAndPlay(targetFile) {
   const dir = path.dirname(targetFile);
-  
   try {
-    // 读取目录所有文件
     const files = fs.readdirSync(dir);
-    
-    // 过滤音频文件并构建播放列表
     const playlist = files
       .filter(file => AUDIO_EXTS.includes(path.extname(file).toLowerCase()))
       .map(file => path.join(dir, file));
 
     const currentIndex = playlist.indexOf(targetFile);
 
-    // 发送数据到渲染进程
     mainWindow.webContents.send('app-init-playlist', {
       playlist,
       currentIndex: currentIndex === -1 ? 0 : currentIndex
     });
-
   } catch (err) {
     console.error('Error reading directory:', err);
   }
 }
 
-// IPC 监听：前端请求读取具体文件数据（音频url + 歌词）
+// --- IPC 处理 ---
+
 ipcMain.handle('read-file-data', async (event, filePath) => {
   try {
-    // 1. 读取歌词
     const pathObj = path.parse(filePath);
     const lrcPath = path.join(pathObj.dir, pathObj.name + '.lrc');
     let lrcContent = null;
@@ -89,10 +80,8 @@ ipcMain.handle('read-file-data', async (event, filePath) => {
       lrcContent = fs.readFileSync(lrcPath, 'utf-8');
     }
 
-    // 2. 返回文件协议路径供前端 Audio 标签使用
-    // Electron 自动处理 file:// 协议的资源访问
     return {
-      src: `file://${filePath.replace(/\\/g, '/')}`, // 转换为 file URL
+      src: `file://${filePath.replace(/\\/g, '/')}`,
       lrc: lrcContent,
       filename: pathObj.base
     };
@@ -102,7 +91,24 @@ ipcMain.handle('read-file-data', async (event, filePath) => {
   }
 });
 
-// 监听单例模式（防止双击新文件打开新窗口，而是复用当前窗口）
+// 3. 新增：在主进程处理 Tags 读取
+ipcMain.handle('read-music-tags', async (event, filePath) => {
+  return new Promise((resolve, reject) => {
+    new jsmediatags.Reader(filePath)
+      .setTagsToRead(["title", "artist", "album", "picture"])
+      .read({
+        onSuccess: (tag) => {
+          resolve(tag);
+        },
+        onError: (error) => {
+          console.log('Tags read error:', error);
+          resolve({ tags: {} }); // 失败也返回空对象，防止前端报错
+        }
+      });
+  });
+});
+
+
 const gotTheLock = app.requestSingleInstanceLock();
 
 if (!gotTheLock) {
@@ -113,7 +119,6 @@ if (!gotTheLock) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
       
-      // 解析新打开的文件
       const lastArg = commandLine[commandLine.length - 1];
       if (fs.existsSync(lastArg) && fs.statSync(lastArg).isFile()) {
         const ext = path.extname(lastArg).toLowerCase();
