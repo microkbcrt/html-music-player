@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <!-- CSP 设置：允许加载本地资源和 blob/data 图片 -->
     <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' blob: data:;">
-    <title>AM Player</title>
+    <title>Kbcrt Player</title>
     <style>
         :root {
             --primary-color: #fff;
@@ -766,31 +766,67 @@
 
         function parseLyrics(text) {
             dom.lyricsBox.innerHTML = '';
-            const rawLines = [];
+            let rawLines = [];
             const reg = /^\[(\d{2}):(\d{2}(?:\.\d{2,3})?)\](.*)$/;
+            
+            // 1. 解析所有行
             text.split('\n').forEach(line => {
                 const m = line.match(reg);
-                if (m) rawLines.push({ t: parseInt(m[1])*60 + parseFloat(m[2]), txt: m[3].trim() });
+                if (m) {
+                    const t = parseInt(m[1]) * 60 + parseFloat(m[2]);
+                    const txt = m[3].trim();
+                    if (txt) { // 过滤掉完全空的行
+                        rawLines.push({ t, txt });
+                    }
+                }
             });
-            
+
+            // 2. 按时间排序 (防止LRC文件乱序)
+            rawLines.sort((a, b) => a.t - b.t);
+
             const finalLyrics = [];
             const hasChinese = (str) => /[\u4e00-\u9fa5]/.test(str);
+            
+            // 定义判定为“同一句歌词”的最大时间差 (秒)
+            // 翻译行通常和原文时间完全一致，或者相差极小
+            const TIME_THRESHOLD = 0.5; 
 
             for (let i = 0; i < rawLines.length; i++) {
-                const current = rawLines[i];
-                const next = rawLines[i+1];
-                if (next && !hasChinese(current.txt) && hasChinese(next.txt)) {
-                    finalLyrics.push({ t: current.t, main: current.txt, sub: next.txt });
-                    i++; 
+                const curr = rawLines[i];
+                const next = rawLines[i + 1];
+
+                // 判断逻辑：
+                // 如果下一行存在，且时间差在阈值内 -> 视为翻译/双语合并
+                if (next && (next.t - curr.t <= TIME_THRESHOLD)) {
+                    // 智能决定谁是 Main 谁是 Sub
+                    // 如果当前是中文，下一句是英文，交换位置 (让英文做主标题，中文做副标题，看个人喜好)
+                    // 或者简单地：第一句是Main，第二句是Sub
+                    
+                    let mainText = curr.txt;
+                    let subText = next.txt;
+
+                    // 优化体验：如果两句一句有中文一句没中文，强制让没中文的(英文)在上面变大
+                    if (hasChinese(curr.txt) && !hasChinese(next.txt)) {
+                        mainText = next.txt;
+                        subText = curr.txt;
+                    } 
+                    // 否则保持原样 (curr是Main, next是Sub)
+                    
+                    finalLyrics.push({ t: curr.t, main: mainText, sub: subText });
+                    i++; // 跳过下一行，因为它已经被合并了
                 } else {
-                    finalLyrics.push({ t: current.t, main: current.txt, sub: '' });
+                    // 时间差太大，视为独立的下一句歌词
+                    finalLyrics.push({ t: curr.t, main: curr.txt, sub: '' });
                 }
             }
+
             state.lyrics = finalLyrics;
 
+            // 渲染 DOM
             state.lyrics.forEach((l) => {
                 const div = document.createElement('div');
                 div.className = 'lyric-line';
+                // 只有当 sub 存在时才渲染 sub div
                 div.innerHTML = `<div class="lyric-main">${l.main}</div>${l.sub ? `<div class="lyric-sub">${l.sub}</div>` : ''}`;
                 div.onclick = () => {
                     dom.audio.currentTime = l.t;
