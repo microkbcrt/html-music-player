@@ -120,19 +120,37 @@ ipcMain.handle('load-track', async (event, filePath) => {
 });
 
 // 2. 读取 ID3 标签 (封面、歌手、标题)
-// 这是一个耗时操作，所以通过 IPC 在主进程完成，避免阻塞 UI
 ipcMain.handle('read-tags', async (event, filePath) => {
   return new Promise((resolve) => {
     new jsmediatags.Reader(filePath)
       .setTagsToRead(["title", "artist", "album", "picture"])
       .read({
         onSuccess: (tag) => {
-          resolve(tag);
+          // 核心修复：如果在主进程就把图片转成 base64 字符串，既安全又快
+          let base64Image = null;
+          if (tag.tags.picture) {
+            const { data, format } = tag.tags.picture;
+            // 使用 Node.js 原生 Buffer 进行转换，绝对不会溢出
+            let base64String = "";
+            try {
+                base64String = Buffer.from(data).toString('base64');
+                base64Image = `data:${format};base64,${base64String}`;
+            } catch (e) {
+                console.error("Cover convert error:", e);
+            }
+          }
+          
+          // 返回精简后的数据，替换原始庞大的数组
+          resolve({
+            title: tag.tags.title,
+            artist: tag.tags.artist,
+            album: tag.tags.album,
+            cover: base64Image // 直接返回 string
+          });
         },
         onError: (error) => {
           console.warn('Read tags error:', error.type, error.info);
-          // 即使失败也返回空对象，防止前端崩溃
-          resolve({ tags: {} });
+          resolve({});
         }
       });
   });
