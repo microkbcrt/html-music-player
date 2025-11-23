@@ -769,64 +769,71 @@
             let rawLines = [];
             const reg = /^\[(\d{2}):(\d{2}(?:\.\d{2,3})?)\](.*)$/;
             
-            // 1. 解析所有行
+            // 1. 解析
             text.split('\n').forEach(line => {
                 const m = line.match(reg);
                 if (m) {
                     const t = parseInt(m[1]) * 60 + parseFloat(m[2]);
                     const txt = m[3].trim();
-                    if (txt) { // 过滤掉完全空的行
-                        rawLines.push({ t, txt });
-                    }
+                    if (txt) rawLines.push({ t, txt });
                 }
             });
 
-            // 2. 按时间排序 (防止LRC文件乱序)
+            // 2. 排序
             rawLines.sort((a, b) => a.t - b.t);
 
             const finalLyrics = [];
             const hasChinese = (str) => /[\u4e00-\u9fa5]/.test(str);
-            
-            // 定义判定为“同一句歌词”的最大时间差 (秒)
-            // 翻译行通常和原文时间完全一致，或者相差极小
-            const TIME_THRESHOLD = 0.5; 
+            const TIME_THRESHOLD = 0.5; // 0.5秒内的视为同一句
 
             for (let i = 0; i < rawLines.length; i++) {
                 const curr = rawLines[i];
                 const next = rawLines[i + 1];
+                const nextNext = rawLines[i + 2];
 
-                // 判断逻辑：
-                // 如果下一行存在，且时间差在阈值内 -> 视为翻译/双语合并
+                // --- 逻辑分支 ---
+
+                // 情况 A：标准双语歌词
+                // 两行时间几乎一样 (例如 [00:05.00]Hello / [00:05.00]你好)
                 if (next && (next.t - curr.t <= TIME_THRESHOLD)) {
-                    // 智能决定谁是 Main 谁是 Sub
-                    // 如果当前是中文，下一句是英文，交换位置 (让英文做主标题，中文做副标题，看个人喜好)
-                    // 或者简单地：第一句是Main，第二句是Sub
-                    
-                    let mainText = curr.txt;
-                    let subText = next.txt;
-
-                    // 优化体验：如果两句一句有中文一句没中文，强制让没中文的(英文)在上面变大
+                    let main = curr.txt;
+                    let sub = next.txt;
+                    // 优化：总是把英文/非中文放主行(大字)，中文放副行
                     if (hasChinese(curr.txt) && !hasChinese(next.txt)) {
-                        mainText = next.txt;
-                        subText = curr.txt;
-                    } 
-                    // 否则保持原样 (curr是Main, next是Sub)
-                    
-                    finalLyrics.push({ t: curr.t, main: mainText, sub: subText });
-                    i++; // 跳过下一行，因为它已经被合并了
-                } else {
-                    // 时间差太大，视为独立的下一句歌词
+                        main = next.txt; sub = curr.txt;
+                    }
+                    finalLyrics.push({ t: curr.t, main: main, sub: sub });
+                    i++; // 跳过下一行
+                }
+                
+                // 情况 B：错位翻译 (你遇到的特殊情况)
+                // 特征：
+                // 1. 当前是英文 (非中文)
+                // 2. 下一句是中文
+                // 3. 中文行的时间 和 下下句(英文)的时间一样
+                // 这说明中文行是属于当前行的，只是时间标晚了
+                else if (
+                    next && nextNext &&
+                    !hasChinese(curr.txt) && hasChinese(next.txt) && // 语言结构：英 -> 中
+                    (nextNext.t - next.t <= TIME_THRESHOLD) // 时间结构：中文行时间 == 下一句英文行时间
+                ) {
+                    // 强制合并 curr 和 next，并使用 curr 的时间戳
+                    finalLyrics.push({ t: curr.t, main: curr.txt, sub: next.txt });
+                    i++; // 跳过那个错位的中文行
+                }
+
+                // 情况 C：普通单行
+                else {
                     finalLyrics.push({ t: curr.t, main: curr.txt, sub: '' });
                 }
             }
 
             state.lyrics = finalLyrics;
 
-            // 渲染 DOM
+            // 渲染
             state.lyrics.forEach((l) => {
                 const div = document.createElement('div');
                 div.className = 'lyric-line';
-                // 只有当 sub 存在时才渲染 sub div
                 div.innerHTML = `<div class="lyric-main">${l.main}</div>${l.sub ? `<div class="lyric-sub">${l.sub}</div>` : ''}`;
                 div.onclick = () => {
                     dom.audio.currentTime = l.t;
