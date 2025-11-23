@@ -468,18 +468,22 @@
             dom.cover.src = defaultCover;
             dom.bg.style.backgroundImage = 'none';
 
-            // 2. 读取元数据 (调用 preload)
+            // 2. 读取元数据 (调用 preload -> main)
             const tags = await window.electron.readTags(filePath);
-            if (tags && tags.tags) {
-                const t = tags.tags;
-                if (t.title) dom.title.innerText = t.title;
-                if (t.artist) dom.artist.innerText = t.artist;
-                if (t.album) dom.album.innerText = t.album;
-                if (t.picture) {
-                    const base64 = btoa(String.fromCharCode(...t.picture.data));
-                    const url = `data:${t.picture.format};base64,${base64}`;
-                    dom.cover.src = url;
-                    dom.bg.style.backgroundImage = `url(${url})`;
+            
+            // 因为 main.js 已经处理好了格式，这里直接用
+            if (tags) {
+                if (tags.title) dom.title.innerText = tags.title;
+                if (tags.artist) dom.artist.innerText = tags.artist;
+                if (tags.album) dom.album.innerText = tags.album;
+                
+                if (tags.cover) {
+                    dom.cover.src = tags.cover;
+                    dom.bg.style.backgroundImage = `url(${tags.cover})`;
+                } else {
+                    // 如果没有封面，重置为默认
+                    dom.cover.src = defaultCover;
+                    dom.bg.style.backgroundImage = 'none';
                 }
             }
 
